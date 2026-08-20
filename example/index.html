@@ -1,0 +1,46 @@
+<!-- Copyright 2026 Greg Fodor -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#efe9dd" />
+    <title>Webspace Lip Syncer</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">Webspace Lip Syncer</p>
+        <h1>Record a voice sample.<br />Watch it talk back.</h1>
+        <p class="lede">
+          Audio stays in this browser tab. The lip-sync model runs locally in a worker.
+        </p>
+
+        <div class="controls">
+          <button id="record" class="primary" type="button">Record sample</button>
+          <button id="stop" type="button" disabled>Stop</button>
+          <button id="play" type="button" disabled>Play it back</button>
+        </div>
+
+        <p id="status" class="status" role="status">Ready to record.</p>
+        <audio id="audio" controls hidden></audio>
+      </section>
+
+      <section class="stage" aria-label="Lip sync visualization">
+        <div id="face" class="face">
+          <div class="eye left"></div>
+          <div class="eye right"></div>
+          <img id="mouth" src="./mouths/viseme-0.svg" alt="Animated mouth" />
+        </div>
+        <div class="readout">
+          <span id="mode">IDLE</span>
+          <span>VISEME <strong id="viseme">0</strong></span>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

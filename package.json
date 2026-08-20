@@ -1,0 +1,48 @@
+{
+  "name": "webspace-lip-syncer",
+  "version": "0.1.0",
+  "description": "Browser lip sync inference from mono PCM audio",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Greg Fodor",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "example",
+    "model",
+    "src",
+    "scripts",
+    "LICENSE",
+    "MODEL_CARD.md",
+    "NOTICE",
+    "PROVENANCE.md",
+    "THIRD_PARTY_NOTICES.txt",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs && node scripts/generate-third-party-notices.mjs",
+    "dev": "npm run build && node scripts/dev.mjs",
+    "test": "node --test",
+    "audit:licenses": "node scripts/check-licenses.mjs",
+    "check": "npm run test && npm run build && npm run audit:licenses && npm pack --dry-run",
+    "import-model": "node scripts/import-legacy-model.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@tensorflow/tfjs": "4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "4.22.0",
+    "esbuild": "0.28.2",
+    "meyda": "5.6.3"
+  }
+}
