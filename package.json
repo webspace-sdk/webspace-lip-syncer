@@ -21,6 +21,7 @@
     "src",
     "scripts",
     "LICENSE",
+    "LIP_SYNC_FIX_PLAN.md",
     "MODEL_CARD.md",
     "NOTICE",
     "PROVENANCE.md",
@@ -43,6 +44,6 @@
     "@tensorflow/tfjs": "4.22.0",
     "@tensorflow/tfjs-backend-wasm": "4.22.0",
     "esbuild": "0.28.2",
-    "meyda": "5.6.3"
+    "fft.js": "^4.0.4"
   }
 }

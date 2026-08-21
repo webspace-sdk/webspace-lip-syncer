@@ -38,9 +38,12 @@ Runtime dependencies are permissively licensed. The build derives
 `THIRD_PARTY_NOTICES.txt` from the packages actually present in the generated
 bundles and fails if it encounters an unknown or non-permissive license.
 
-The principal runtime components are TensorFlow.js (Apache-2.0 and MIT), Meyda
-(MIT), and their permissively licensed transitive dependencies. Build and demo
-tools are not incorporated into the runtime bundles.
+The principal runtime components are TensorFlow.js (Apache-2.0 and MIT) and
+FFT.js (MIT), plus their permissively licensed transitive dependencies. The
+torchaudio-compatible feature implementation is first-party code derived from
+the recovered training equations and verified against the original cached
+features; torchaudio itself is not bundled. Build and demo tools are not
+incorporated into the runtime bundles.
 
 ## Release check
 

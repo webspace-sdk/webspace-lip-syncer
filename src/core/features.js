@@ -17,9 +17,10 @@ export function buildNormalizedFeatures(frames) {
 
   const features = new Float32Array(MODEL_FEATURE_COUNT);
   for (let i = 0; i < 14; i += 1) {
-    features[i] = (current[i] - FEATURE_MEANS[i]) / FEATURE_VARIANCES[i];
+    features[i] = (current[i] - FEATURE_MEANS[i]) / (FEATURE_VARIANCES[i] + 0.001);
     const derivative = (ahead2[i] + ahead1[i] - behind1[i] - behind2[i]) / 4;
-    features[14 + i] = (derivative - FEATURE_MEANS[14 + i]) / FEATURE_VARIANCES[14 + i];
+    features[14 + i] =
+      (derivative - FEATURE_MEANS[14 + i]) / (FEATURE_VARIANCES[14 + i] + 0.001);
   }
 
   return features;

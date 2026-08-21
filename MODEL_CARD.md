@@ -8,16 +8,19 @@ mouth. Inference runs locally in a browser worker.
 
 ## Inputs and outputs
 
-- Input audio: mono PCM, resampled internally to 44.1 kHz.
-- Analysis: 1024-sample windows, 441-sample hops, 13 MFCC values plus log
-  energy, with centered first derivatives.
+- Input audio: mono PCM, resampled internally to 48 kHz when necessary.
+- Analysis: torchaudio-0.6-compatible 1200-sample windows, 480-sample hops,
+  13 log-mel MFCC values plus independently calculated log energy, with
+  centered first derivatives.
 - Model input: 28 normalized features per prediction.
-- Model output: 12 class scores. The package emits the selected viseme,
-  confidence, audio-context timestamp, signal level, and speaking state.
+- Model output: 12 class logits. The package emits the selected viseme,
+  softmax confidence, raw winning logit, audio-context timestamp, signal
+  level, and speaking state.
 
-The centered derivative uses two future feature frames. Consumers should
-therefore expect a small amount of algorithmic look-ahead in addition to model
-loading and inference time.
+The centered derivative uses two future feature frames. Training also shifted
+targets by six 10 ms frames, so `effectiveTimestamp` is 60 ms earlier than the
+acoustic feature time before any smoothing correction. Consumers should expect
+feature look-ahead and buffering latency in addition to model inference time.
 
 ## Provenance and license
 
@@ -31,5 +34,6 @@ TensorFlow.js topology and weights and adds license metadata to the manifest.
 The model is intended for responsive visual animation from speech, not speech
 recognition, speaker identification, biometric analysis, or accessibility
 transcription. Accuracy can vary by voice, language, microphone, noise level,
-and browser audio processing. The class IDs are animation categories, not a
-phonetic transcript.
+optional legacy conditioning, and browser audio processing. The built-in energy
+gate is a fallback; a production VAD can drive `setSpeaking`. The class IDs are
+animation categories, not a phonetic transcript.

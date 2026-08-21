@@ -37,7 +37,7 @@ const source = context.createMediaStreamSource(stream);
 const lipSyncer = await WebAudioLipSyncer.create(context, { sourceNode: source });
 
 lipSyncer.addEventListener("viseme", event => {
-  const { viseme, timestamp, confidence, speaking, levelDb, changed } = event.detail;
+  const { viseme, timestamp, confidence, logit, speaking, levelDb, changed } = event.detail;
   // Apply `viseme` to an avatar or serialize the frame for transport.
 });
 
@@ -49,10 +49,12 @@ stream.getTracks().forEach(track => track.stop());
 `WebAudioLipSyncer` captures audio through an `AudioWorkletNode`, transfers
 chunks directly to an inference worker over a `MessagePort`, and keeps the
 capture branch silent. It does not alter or own the source node's other audio
-connections. By default it also reproduces the model's original analysis
+connections. By default it also reproduces the legacy Webspace analysis
 conditioning: 3x gain followed by a Web Audio compressor with a -12 dB
 threshold, 0 dB knee, 20:1 ratio, 5 ms attack, and 50 ms release. Pass
-`conditionAudio: false` only if the source has already been conditioned.
+`conditionAudio: false` if the source has already been conditioned or an
+integration needs unmodified PCM. This graph was part of the historical browser
+deployment, but it is not part of the recovered torchaudio training transform.
 
 `createPcmTap()` returns a `MessagePort` carrying the exact conditioned PCM
 chunks sent to inference (`{ type: "audio", samples, timestamp }`). Call
@@ -73,12 +75,13 @@ lipSyncer.addEventListener("viseme", event => console.log(event.detail));
 lipSyncer.push(float32Samples, timestampSeconds);
 ```
 
-The current implementation treats successive pushes as one continuous stream;
-call `reset()` after a seek or discontinuity. `setSpeaking(true | false)` can
-override energy-based silence detection, and `setSpeaking(null)` restores the
-internal detector. The model was calibrated against the conditioning described
-above; raw-PCM integrations should apply equivalent input conditioning before
-calling `push()`.
+Audio is converted to the model's 48 kHz clock with a streaming band-limited
+resampler when necessary. The current implementation treats successive pushes
+as one continuous stream; call `reset()` after a seek or discontinuity.
+`setSpeaking(true | false)` can override energy-based silence detection, and
+`setSpeaking(null)` restores the internal detector. Raw-PCM integrations should
+make an explicit conditioning choice and keep it consistent between evaluation
+and production.
 
 If a bundler does not preserve package-relative assets, pass explicit
 `modelUrl`, `workerUrl`, `workletUrl`, and `wasmBaseUrl` options. Keeping those
@@ -92,9 +95,10 @@ Each `viseme` event contains:
 ```ts
 interface VisemeFrame {
   viseme: number;       // 0-11; 0 is neutral during silence
-  timestamp: number;    // seconds on the input/audio-context timeline
-  effectiveTimestamp: number; // transition onset, corrected for smoothing
-  confidence: number;   // winning model score
+  timestamp: number;    // acoustic-feature time on the input/audio-context timeline
+  effectiveTimestamp: number; // target time, corrected for trained 60 ms offset and smoothing
+  confidence: number;   // softmax probability of the winning class
+  logit: number | null; // raw winning score; null for silence-gate output
   speaking: boolean;
   levelDb: number;
   changed: boolean;     // true when the smoothed output changes
@@ -110,7 +114,7 @@ AudioNode or Float32 PCM
         |
 AudioWorklet capture (Web Audio adapter only)
         |
-PCM worker: resample -> MFCC/energy -> model -> smoothing
+PCM worker: band-limited resample -> torchaudio-compatible MFCC/energy -> model -> smoothing
         |
 timestamped VisemeFrame events
         |

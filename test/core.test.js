@@ -4,29 +4,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { MODEL_LABEL_DELAY_SECONDS } from "../src/core/constants.js";
 import { buildNormalizedFeatures } from "../src/core/features.js";
 import { resetStatefulLayers } from "../src/core/reset-model-state.js";
-import { SlidingWindowBuffer } from "../src/core/sliding-window-buffer.js";
-import { StreamingLinearResampler } from "../src/core/streaming-resampler.js";
+import { softmaxProbability } from "../src/core/scores.js";
+import { StreamingSincResampler } from "../src/core/streaming-resampler.js";
+import { targetTimestamp } from "../src/core/timing.js";
 import { VisemeSmoother } from "../src/core/viseme-smoother.js";
 
-test("resamples a chunked 48 kHz stream to approximately 44.1 kHz", () => {
-  const resampler = new StreamingLinearResampler(48000, 44100);
-  let outputLength = 0;
-  for (let offset = 0; offset < 48000; offset += 512) {
-    const length = Math.min(512, 48000 - offset);
-    const input = Float32Array.from({ length }, (_, i) => Math.sin(((offset + i) * Math.PI) / 100));
-    outputLength += resampler.process(input).length;
+function concatenate(parts) {
+  const output = new Float32Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
   }
-  assert.ok(outputLength >= 44098 && outputLength <= 44101, `unexpected output length ${outputLength}`);
+  return output;
+}
+
+test("resamples independently of input chunk boundaries", () => {
+  const input = Float32Array.from(
+    { length: 44100 },
+    (_, index) => Math.sin((2 * Math.PI * 997 * index) / 44100)
+  );
+  const whole = new StreamingSincResampler(44100, 48000).process(input);
+  const chunkedResampler = new StreamingSincResampler(44100, 48000);
+  const parts = [];
+  for (let offset = 0; offset < input.length; offset += 137) {
+    parts.push(chunkedResampler.process(input.slice(offset, offset + 137)));
+  }
+  const chunked = concatenate(parts);
+  assert.deepEqual(chunked, whole);
+  assert.ok(whole.length >= 47970 && whole.length <= 48000, `unexpected output length ${whole.length}`);
 });
 
-test("emits overlapping windows at the requested hop", () => {
-  const windows = new SlidingWindowBuffer(1024, 441);
-  const ends = [];
-  windows.push(new Float32Array(700), (_, end) => ends.push(end));
-  windows.push(new Float32Array(1300), (_, end) => ends.push(end));
-  assert.deepEqual(ends, [1024, 1465, 1906]);
+test("band-limited resampling suppresses frequencies above the output Nyquist limit", () => {
+  const rmsAfterResampling = frequency => {
+    const input = Float32Array.from(
+      { length: 9600 },
+      (_, index) => Math.sin((2 * Math.PI * frequency * index) / 96000)
+    );
+    const output = new StreamingSincResampler(96000, 48000).process(input);
+    let sumSquares = 0;
+    for (let i = 200; i < output.length; i += 1) sumSquares += output[i] * output[i];
+    return Math.sqrt(sumSquares / (output.length - 200));
+  };
+
+  assert.ok(rmsAfterResampling(10000) > 0.65);
+  assert.ok(rmsAfterResampling(30000) < 0.001);
 });
 
 test("builds the 28 model features from five frames", () => {
@@ -38,7 +63,7 @@ test("builds the 28 model features from five frames", () => {
   assert.ok(features.every(Number.isFinite));
 });
 
-test("matches the legacy normalization and centered-derivative regression vector", () => {
+test("matches the training normalization and centered-derivative regression vector", () => {
   const frames = Array.from({ length: 5 }, (_, frame) =>
     Float32Array.from(
       { length: 14 },
@@ -46,37 +71,45 @@ test("matches the legacy normalization and centered-derivative regression vector
     )
   );
   const expected = new Float32Array([
-    0.0754854753613472,
-    -0.1562000960111618,
-    0.1458899825811386,
-    -0.1893281787633896,
-    0.07225080579519272,
-    -0.07926932722330093,
-    0.06880674511194229,
-    -0.1811789721250534,
-    0.044945597648620605,
-    -0.19532065093517303,
-    -0.016745541244745255,
-    0.24112871289253235,
-    0.15188297629356384,
-    0.19636884331703186,
-    0.03345222398638725,
-    0.09923078864812851,
-    0.06999269127845764,
-    -0.1941204071044922,
-    -0.7893556952476501,
-    -1.2862962484359741,
-    -1.1505120992660522,
-    -0.6343850493431091,
-    0.2362852245569229,
-    0.9143776297569275,
-    1.1418719291687012,
-    0.8404443264007568,
-    0.3818301856517792,
-    0.09379890561103821
+    0.07822609692811966,
+    -0.1554194837808609,
+    0.1431225687265396,
+    -0.18213096261024475,
+    0.07652989029884338,
+    -0.08874095231294632,
+    0.08044426143169403,
+    -0.17709048092365265,
+    0.04381438344717026,
+    -0.18358439207077026,
+    -0.01765267737209797,
+    0.25150012969970703,
+    0.13990557193756104,
+    0.19749104976654053,
+    0.03324636444449425,
+    0.09858020395040512,
+    0.06964713335037231,
+    -0.19357584416866302,
+    -0.7856636047363281,
+    -1.3052327632904053,
+    -1.1492661237716675,
+    -0.6370786428451538,
+    0.23384729027748108,
+    0.9110572338104248,
+    1.1320382356643677,
+    0.8506985902786255,
+    0.3779269754886627,
+    0.09208221733570099
   ]);
 
   assert.deepEqual(buildNormalizedFeatures(frames), expected);
+});
+
+test("reports softmax confidence while preserving the trained target offset", () => {
+  const logits = new Float32Array([1, 2, 3]);
+  const expected = Math.exp(3) / (Math.exp(1) + Math.exp(2) + Math.exp(3));
+  assert.ok(Math.abs(softmaxProbability(logits, 2) - expected) < 1e-12);
+  assert.equal(MODEL_LABEL_DELAY_SECONDS, 0.06);
+  assert.ok(Math.abs(targetTimestamp(5, 0.02) - 4.92) < 1e-12);
 });
 
 test("requires agreement before changing visemes", () => {

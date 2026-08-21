@@ -4,21 +4,15 @@
 import * as tf from "@tensorflow/tfjs";
 import { setWasmPaths } from "@tensorflow/tfjs-backend-wasm";
 import "@tensorflow/tfjs-backend-wasm";
-import Meyda from "meyda";
 
-import {
-  MODEL_HOP_SIZE,
-  MODEL_SAMPLE_RATE,
-  MODEL_VISEME_COUNT,
-  MODEL_WINDOW_SIZE
-} from "../core/constants.js";
+import { MODEL_HOP_SIZE, MODEL_SAMPLE_RATE, MODEL_VISEME_COUNT } from "../core/constants.js";
 import { argMax, buildNormalizedFeatures } from "../core/features.js";
 import { resetStatefulLayers } from "../core/reset-model-state.js";
-import { SlidingWindowBuffer } from "../core/sliding-window-buffer.js";
-import { StreamingLinearResampler } from "../core/streaming-resampler.js";
+import { softmaxProbability } from "../core/scores.js";
+import { StreamingSincResampler } from "../core/streaming-resampler.js";
+import { targetTimestamp } from "../core/timing.js";
+import { TorchaudioFeatureStream } from "../core/torchaudio-features.js";
 import { VisemeSmoother } from "../core/viseme-smoother.js";
-
-const MFCC_FEATURES = ["mfcc", "energy"];
 
 function serializeError(error) {
   return {
@@ -37,25 +31,17 @@ class LipSyncInference {
     minimumVisemeFrames = 2
   }) {
     this.model = model;
-    this.inputSampleRate = inputSampleRate;
     this.silenceThresholdDb = silenceThresholdDb;
     this.silenceHoldSeconds = silenceHoldMs / 1000;
-    this.resampler = new StreamingLinearResampler(inputSampleRate, MODEL_SAMPLE_RATE);
-    this.windows = new SlidingWindowBuffer(MODEL_WINDOW_SIZE, MODEL_HOP_SIZE);
+    this.resampler = new StreamingSincResampler(inputSampleRate, MODEL_SAMPLE_RATE);
+    this.featureStream = new TorchaudioFeatureStream();
     this.smoother = new VisemeSmoother({ agreementFrames, minimumFrames: minimumVisemeFrames });
     this.reset();
-
-    Meyda.sampleRate = MODEL_SAMPLE_RATE;
-    Meyda.bufferSize = MODEL_WINDOW_SIZE;
-    Meyda.hopSize = MODEL_HOP_SIZE;
-    Meyda.melBands = 26;
-    Meyda.numberOfMFCCCoefficients = 13;
-    Meyda.windowingFunction = "hanning";
   }
 
   reset() {
     this.resampler?.reset();
-    this.windows?.reset();
+    this.featureStream?.reset();
     this.smoother?.reset();
     this.rawFeatureFrames = [];
     this.rawFeatureTimes = [];
@@ -80,26 +66,15 @@ class LipSyncInference {
     if (this.baseTimestamp === null) this.baseTimestamp = Number.isFinite(timestamp) ? timestamp : 0;
 
     const resampled = this.resampler.process(samples);
-    this.windows.push(resampled, (window, endSample) => this.processWindow(window, endSample));
+    this.featureStream.push(resampled, (features, frameSample, levelDb) =>
+      this.processFeatureFrame(features, frameSample, levelDb)
+    );
   }
 
-  processWindow(window, endSample) {
-    const extracted = Meyda.extract(MFCC_FEATURES, window);
-    if (!extracted || !extracted.mfcc || extracted.mfcc.length < 13) return;
-
-    const raw = new Float32Array(14);
-    raw[0] = -extracted.mfcc[0];
-    for (let i = 1; i < 13; i += 1) raw[i] = extracted.mfcc[i];
-    raw[13] = Math.log(Math.max(extracted.energy, 1e-12));
-
-    const centerTimestamp = this.baseTimestamp + (endSample - MODEL_WINDOW_SIZE / 2) / MODEL_SAMPLE_RATE;
-    let sumSquares = 0;
-    for (let i = 0; i < window.length; i += 1) sumSquares += window[i] * window[i];
-    const rms = Math.sqrt(sumSquares / window.length);
-    const levelDb = 20 * Math.log10(Math.max(rms, 1e-12));
-
-    this.rawFeatureFrames.push(raw);
-    this.rawFeatureTimes.push(centerTimestamp);
+  processFeatureFrame(features, frameSample, levelDb) {
+    const featureTimestamp = this.baseTimestamp + frameSample / MODEL_SAMPLE_RATE;
+    this.rawFeatureFrames.push(features);
+    this.rawFeatureTimes.push(featureTimestamp);
     this.rawLevels.push(levelDb);
 
     if (this.rawFeatureFrames.length < 5) return;
@@ -119,7 +94,16 @@ class LipSyncInference {
       if (!this.inSustainedSilence) this.resetModelState();
       this.inSustainedSilence = true;
       const smoothed = this.smoother.force(0);
-      this.emitViseme(smoothed.viseme, timestamp, timestamp, 1, false, levelDb, smoothed.changed);
+      this.emitViseme(
+        smoothed.viseme,
+        timestamp,
+        targetTimestamp(timestamp),
+        1,
+        null,
+        false,
+        levelDb,
+        smoothed.changed
+      );
       return;
     }
 
@@ -138,6 +122,11 @@ class LipSyncInference {
         return;
       }
 
+      const confidence = softmaxProbability(values, best.index, MODEL_VISEME_COUNT);
+      if (!Number.isFinite(confidence)) {
+        this.resetModelState();
+        return;
+      }
       const smoothed = this.smoother.update(best.index);
       const smoothingDelay = smoothed.changed
         ? ((this.smoother.agreementFrames - 1) * MODEL_HOP_SIZE) / MODEL_SAMPLE_RATE
@@ -145,7 +134,8 @@ class LipSyncInference {
       this.emitViseme(
         smoothed.viseme,
         timestamp,
-        timestamp - smoothingDelay,
+        targetTimestamp(timestamp, smoothingDelay),
+        confidence,
         best.value,
         speaking,
         levelDb,
@@ -157,10 +147,10 @@ class LipSyncInference {
     }
   }
 
-  emitViseme(viseme, timestamp, effectiveTimestamp, confidence, speaking, levelDb, changed) {
+  emitViseme(viseme, timestamp, effectiveTimestamp, confidence, logit, speaking, levelDb, changed) {
     self.postMessage({
       type: "viseme",
-      detail: { viseme, timestamp, effectiveTimestamp, confidence, speaking, levelDb, changed }
+      detail: { viseme, timestamp, effectiveTimestamp, confidence, logit, speaking, levelDb, changed }
     });
   }
 }

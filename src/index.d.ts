@@ -6,6 +6,7 @@ export interface VisemeFrame {
   timestamp: number;
   effectiveTimestamp: number;
   confidence: number;
+  logit: number | null;
   speaking: boolean;
   levelDb: number;
   changed: boolean;
@@ -59,5 +60,7 @@ export class WebAudioLipSyncer extends EventTarget {
 export const MODEL_SAMPLE_RATE: number;
 export const MODEL_WINDOW_SIZE: number;
 export const MODEL_HOP_SIZE: number;
+export const MODEL_LABEL_DELAY_FRAMES: number;
+export const MODEL_LABEL_DELAY_SECONDS: number;
 export const MODEL_FEATURE_COUNT: number;
 export const MODEL_VISEME_COUNT: number;
